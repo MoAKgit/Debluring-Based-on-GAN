@@ -37,15 +37,27 @@ def get_norm_layer(norm_type='batch'):
         norm_layer = functools.partial(nn.InstanceNorm2d, affine=False, track_running_stats=True)
     else:
         raise NotImplementedError('normalization layer [%s] is not found' % norm_type)
+        
+        # if norm_type == 'spectral_Norm':
+        #     norm_layer = torch.nn.utils.spectral_norm
+        # elif norm_type == 'weight_Norm':
+        #     norm_layer = torch.nn.utils.weight_norm
+        
+        
     return norm_layer
 
 
-def define_G(args, device ):
+def define_G(args, device, use_dropout=False ):
     
     netG = None
     norm_layer = get_norm_layer(norm_type = args.norm)
     
-    netG = scaled_ResnetGenerator(args,norm_layer=norm_layer, n_blocks=4)
+    netG = ResnetGenerator(args.input_nc, 
+                           args.output_nc, 
+                           args.ngf,
+                           norm_layer=norm_layer, use_dropout=use_dropout, 
+                           n_blocks=4,
+                           learn_residual = args.learn_residual)
     
     checkpoints_path = 'ckpt/latest_net_G.pth'
     if args.continue_training == True:
@@ -63,14 +75,16 @@ def define_G(args, device ):
     
     return netG.to(device)
 
-def define_D(args, device):
+def define_D(args, device, use_sigmoid):
     netD = None
     
     
     norm_layer = get_norm_layer(norm_type=args.norm)
 
 
-    netD = NLayerDiscriminator(args, 3, norm_layer=norm_layer)
+    netD = NLayerDiscriminator(args.input_nc, args.ndf, n_layers=args.n_layers_D, 
+                               norm_layer=norm_layer, 
+                               use_sigmoid=use_sigmoid)
 
     checkpoints_path = 'ckpt/latest_net_D.pth'
     if args.continue_training == True:
@@ -164,54 +178,9 @@ class Self_Attn(nn.Module):
         out = self.gamma*out + x_in
         return out
 
-class scaled_ResnetGenerator(nn.Module):
-    def __init__(self, args, norm_layer, n_blocks=4):
-        super(scaled_ResnetGenerator, self).__init__()
-        
-        self.netG1 = ResnetGenerator(args.input_nc, 
-                       args.output_nc, 
-                       args.ngf, 
-                       norm_layer=norm_layer, use_dropout=args.use_dropout, 
-                       n_blocks=4,
-                       learn_residual = args.learn_residual)
-        self.netG2 = ResnetGenerator(args.input_nc, 
-                       args.output_nc, 
-                       args.ngf, 
-                       norm_layer=norm_layer, use_dropout=args.use_dropout, 
-                       n_blocks=4,
-                       learn_residual = args.learn_residual)
-        self.netG3 = ResnetGenerator(args.input_nc, 
-                       args.output_nc, 
-                       args.ngf, 
-                       norm_layer=norm_layer, use_dropout=args.use_dropout, 
-                       n_blocks=4,
-                       learn_residual = args.learn_residual)
-        
-        self.tconv1 = nn.ConvTranspose2d(3, 3, kernel_size=5,stride=2, 
-                                         padding=2,output_padding=1)
-        self.conv1 = nn.Conv2d(3, 3, kernel_size=5, stride=1,
-                                       padding=2,padding_mode= 'reflect')
-    def forward(self, x):
-        x_scaled1 = torch.nn.functional.interpolate(x, (128, 128))
-        x_scaled2 = torch.nn.functional.interpolate(x, (64, 64))
-        x_scaled3 = torch.nn.functional.interpolate(x, (32, 32))
-        
-        # out = torch.cat((x_scaled3, x_scaled3), dim = 1)
-        # out = self.netG1(out)
-        # out = torch.nn.functional.interpolate(out, (64, 64))
-        
-        out = torch.cat((x_scaled1, x_scaled1), dim = 1)
-        out = self.netG2(out)
-        out = torch.nn.functional.interpolate(out, (256, 256))
-        
-        out = torch.cat((x, out), dim = 1)
-        out = self.netG3(out)
-        return out
-        
-
 class ResnetGenerator(nn.Module):
     def __init__(
-            self, input_nc, output_nc,  ngf=64, device = None, norm_layer=nn.BatchNorm2d, 
+            self, input_nc, output_nc,  ngf=64, device = None,  norm_layer=nn.BatchNorm2d, 
             use_dropout=False,n_blocks=4, learn_residual=True,  padding_type='reflect',
             use_norm = True):
         assert (n_blocks >= 0)
@@ -227,12 +196,13 @@ class ResnetGenerator(nn.Module):
             use_bias = norm_layer == nn.InstanceNorm2d
         
         
+        
         print('Norm_layer : ',  norm_layer)
         
         self.device = device
         self.layer1_ReflectionPad2d = nn.ReflectionPad2d(3)
         #################
-        self.conv1 = nn.Conv2d(2*input_nc, 32, kernel_size=5, stride=1,
+        self.conv1 = nn.Conv2d(input_nc, 32, kernel_size=5, stride=2,
                                        padding=2,bias=use_bias, 
                                        padding_mode= 'reflect',dilation = 1)
         self.conv2 = nn.Conv2d(32, 64, kernel_size=5, stride=2,
@@ -241,15 +211,17 @@ class ResnetGenerator(nn.Module):
         self.conv3 = nn.Conv2d(64, 128, kernel_size=5, stride=2,
                                        padding=2,bias=use_bias,
                                        padding_mode= 'reflect',dilation = 1)
+        self.conv4 = nn.Conv2d(3, 3, kernel_size=5, stride=1,
+                                       padding=2,bias=use_bias,
+                                       padding_mode= 'reflect',dilation = 1)
         self.tconv1 = nn.ConvTranspose2d(128, 64, kernel_size=5, stride=2, padding=2, 
                                                 output_padding=1, bias=use_bias)
         
-        self.tconv2 = nn.ConvTranspose2d(64, 32, kernel_size=5,stride=2, 
+        self.tconv2 = nn.ConvTranspose2d(2*64, 32, kernel_size=5,stride=2, 
                                          padding=2,output_padding=1, bias=use_bias)
         
-        self.conv4 =nn.Conv2d(32, 3, kernel_size=5, stride=1,
-                                       padding=2,bias=use_bias, 
-                                       padding_mode= 'reflect',dilation = 1)
+        self.tconv3 = nn.ConvTranspose2d(2*32, 3, kernel_size=5,stride=2, 
+                                         padding=2,output_padding=1, bias=use_bias)
         #################
         
         self.diconv128 = dilated_conv_block(128, use_norm = use_norm, 
@@ -269,6 +241,7 @@ class ResnetGenerator(nn.Module):
         ################
         BLOCK_128 = nn.ModuleList()
         for i in range(n_blocks):
+            
             BLOCK_128.append(ResnetBlock(128, padding_type=padding_type, 
                                               use_norm = use_norm,
                                               norm_layer=norm_layer, 
@@ -316,30 +289,47 @@ class ResnetGenerator(nn.Module):
         self.layer4_ReflectionPad2d = nn.ReflectionPad2d(3)
         self.layer4_Conv2d = nn.Conv2d(64, output_nc, kernel_size=7, padding=0)
         self.layer4_Tanh = nn.Tanh()
+        self.LeakyReLU = nn.LeakyReLU()
         ################
         # self.attn1 = Self_Attn( 128, (128, 128,128), 1 , 'relu')
         # self.attn2 = Self_Attn( 256, (256, 64,64), 1 , 'relu')
     def forward(self, x):
         
         out = self.conv1(x)
+        out = self.LeakyReLU(out)
         out = self.diconv32(out)
+        out = self.LeakyReLU(out)
         out = self.BLOCK_32(out)
+        res1 = out
         ##########
         out = self.conv2(out)
+        out = self.LeakyReLU(out)
         out = self.diconv64(out)
+        out = self.LeakyReLU(out)
         out = self.BLOCK_64(out)
+        res2 = out
         ##########
         out = self.conv3(out)
+        out = self.LeakyReLU(out)
         out = self.BLOCK_128(out)
+        # print('11111111', out.shape)
         ##########
+        
         out = self.tconv1(out)
+        out = self.LeakyReLU(out)
         out = self.BLOCK_64t(out)
+        out = torch.cat( (out, res2), dim=1 )
         ##########
         out = self.tconv2(out)
+        out = self.LeakyReLU(out)
         out = self.BLOCK_32t(out)
         
+        out = torch.cat( (out, res1), dim=1 )
+        out = self.tconv3(out)
+        out = self.LeakyReLU(out)
         out = self.conv4(out)
-        out = torch.clamp( x[:,:3,:,:] + out, min=-1, max=1)
+        # print('out: ', out.shape)
+        out = torch.clamp(x + out, min=-1, max=1)
         
         return out
 
@@ -347,16 +337,16 @@ class dilated_conv_block(nn.Module):
     def __init__(self, dim, use_norm, norm_layer, use_bias):
         super(dilated_conv_block, self).__init__()
         
-        self.dilated1_conv = nn.Conv2d(dim, dim, kernel_size=5, padding=2 , stride = 1,
+        self.dilated1_conv = nn.Conv2d(dim, dim, kernel_size=3, padding=1 , stride = 1,
                                       dilation = 1 ,bias=use_bias,padding_mode= 'reflect')
-        self.dilated2_conv = nn.Conv2d(dim, dim, kernel_size=5, padding=4 , stride = 1,
-                                      dilation = 2,bias=use_bias,padding_mode= 'reflect')
-        self.dilated3_conv = nn.Conv2d(dim, dim, kernel_size=5, padding=6 , stride = 1,
-                                      dilation = 3,bias=use_bias,padding_mode= 'reflect')
-        self.dilated4_conv = nn.Conv2d(dim, dim, kernel_size=5, padding=8 , stride = 1,
-                                      dilation = 4,bias=use_bias,padding_mode= 'reflect')
-        self.dilated5_conv = nn.Conv2d(dim, dim, kernel_size=5, padding=10 , stride = 1,
-                                      dilation = 5,bias=use_bias,padding_mode= 'reflect')
+        self.dilated2_conv = nn.Conv2d(dim, dim, kernel_size=5, padding=2 , stride = 1,
+                                      dilation = 1,bias=use_bias,padding_mode= 'reflect')
+        self.dilated3_conv = nn.Conv2d(dim, dim, kernel_size=7, padding=3 , stride = 1,
+                                      dilation = 1,bias=use_bias,padding_mode= 'reflect')
+        self.dilated4_conv = nn.Conv2d(dim, dim, kernel_size=9, padding=4 , stride = 1,
+                                      dilation = 1,bias=use_bias,padding_mode= 'reflect')
+        self.dilated5_conv = nn.Conv2d(dim, dim, kernel_size=11, padding=5 , stride = 1,
+                                      dilation = 1,bias=use_bias,padding_mode= 'reflect')
         
         self.conv = nn.Conv2d(5*dim, dim, kernel_size=5, padding=2 , stride = 1,
                               bias=use_bias)
@@ -412,15 +402,12 @@ class ResnetBlock(nn.Module):
     
     
 class NLayerDiscriminator(nn.Module):
-    def __init__(self, args, input_nc, norm_layer = nn.BatchNorm2d):
+    def __init__(self, input_nc, ndf=64, n_layers=3, device = None, norm_layer=nn.BatchNorm2d, 
+                 use_sigmoid=True):
         super(NLayerDiscriminator, self).__init__()
         
-        ndf=64
-        n_layers=3
-        device = None
         
-        print('11111111111111',input_nc)
-        
+
         if type(norm_layer) == functools.partial:
             use_bias = norm_layer.func == nn.InstanceNorm2d
         else:
@@ -429,21 +416,28 @@ class NLayerDiscriminator(nn.Module):
         kw = 4
         padw = int(np.ceil((kw - 1) / 2))
         
+
+
         
-        self.layer1 = nn.Conv2d(input_nc, ndf, kernel_size=kw, 
-                                stride=2, padding=padw, dilation= 1,
+        self.layer1 = nn.Conv2d(input_nc, ndf, kernel_size=3, 
+                                stride=2, padding=1, dilation= 1,
                                 padding_mode= 'reflect')
         self.relu1 = nn.LeakyReLU(0.2)
         
-        self.layer2 = nn.Conv2d(input_nc, ndf, kernel_size=kw, 
-                                stride=2, padding=padw+2, dilation= 2,
+        self.layer2 = nn.Conv2d(input_nc, ndf, kernel_size=5, 
+                                stride=2, padding=2, dilation= 1,
                                 padding_mode= 'reflect')
         self.relu2 = nn.LeakyReLU(0.2)
         
-        self.layer3 = nn.Conv2d(input_nc, ndf, kernel_size=kw, 
-                                stride=2, padding=padw+5, dilation= 4,
+        self.layer3 = nn.Conv2d(input_nc, ndf, kernel_size=7, 
+                                stride=2, padding=3, dilation= 1,
                                 padding_mode= 'reflect')
         self.relu3 = nn.LeakyReLU(0.2)
+        
+        self.layer4 = nn.Conv2d(input_nc, ndf, kernel_size=9, 
+                                stride=2, padding=4, dilation= 1,
+                                padding_mode= 'reflect')
+        self.relu4 = nn.LeakyReLU(0.2)
         
         
         # self.sequence1 = [
@@ -451,8 +445,7 @@ class NLayerDiscriminator(nn.Module):
         #     nn.LeakyReLU(0.2, True)
         # ]
         
-        self.layer5 = nn.Conv2d(3*ndf, ndf, kernel_size=3, 
-                                stride=1, padding=padw)
+        self.layer5 = nn.Conv2d(4*ndf, ndf, kernel_size=3, stride=1, padding=padw)
         self.relu5 = nn.LeakyReLU(0.2)
         
         sequence =[]
@@ -464,7 +457,6 @@ class NLayerDiscriminator(nn.Module):
             sequence += [
                 nn.Conv2d(ndf * nf_mult_prev, ndf * nf_mult,
                           kernel_size=kw, stride=2, padding=padw, bias=use_bias),
-                norm_layer(ndf * nf_mult),
                 nn.LeakyReLU(0.2)
             ]
 
@@ -473,7 +465,6 @@ class NLayerDiscriminator(nn.Module):
         sequence += [
             nn.Conv2d(ndf * nf_mult_prev, ndf * nf_mult, kernel_size=kw, 
                       stride=1, padding=padw, bias=use_bias),
-            norm_layer(ndf * nf_mult),
             nn.LeakyReLU(0.2, True)
         ]
 
@@ -495,8 +486,10 @@ class NLayerDiscriminator(nn.Module):
         out3 = self.layer3(input)
         out3 = self.relu3(out3)
 
+        out4 = self.layer4(input)
+        out4 = self.relu3(out4)
         
-        out = torch.cat((out1, out2, out3), dim = 1)
+        out = torch.cat((out1, out2, out3, out4), dim = 1)
         
         
         out = self.layer5(out)

@@ -27,13 +27,15 @@ def arg_parse():
     
     """
     parser = argparse.ArgumentParser(description='DebluredGAN')
-    parser.add_argument("--epochs",dest= 'epochs', default= 1000) 
+    parser.add_argument("--epochs",dest= 'epochs', default= 1) 
     parser.add_argument("--batch_size",dest= 'batch_size', default= 8) 
-    parser.add_argument("--learning_rate",dest= 'learning_rate', default= 0.00001) 
+    parser.add_argument("--learning_rate",dest= 'learning_rate', default= 0.0001) 
+    
     parser.add_argument("--train_path",dest= 'train_path', 
                         default= "F:\data/GOPRO\AB/train")
     parser.add_argument("--test_path",dest= 'test_path', 
-                        default= "F:\data/GOPRO\AB/test")
+                        default= "F:\data/GOPRO\AB/test_fullsize")
+                        
     parser.add_argument("--input_nc",dest= 'input_nc', default= 3) 
     parser.add_argument("--output_nc",dest= 'output_nc', default= 3)
     parser.add_argument("--ngf",dest= 'ngf', default= 64)
@@ -84,6 +86,7 @@ if __name__ == '__main__':
     itr = 0
     best_psnr = 0
     for epoch in range(args.epochs):
+        
         for i, (real_A, real_B) in enumerate(tqdm(train_dataloader),0):
             real_A, real_B= map(lambda x: x.to(device), [real_A, real_B])
             
@@ -109,7 +112,7 @@ if __name__ == '__main__':
             psnr  = model.test(model.netG1, test_dataloader, device, epoch)
             PSNR_history.append(psnr)
             print('epoch: ', epoch, 'PSNR : ', psnr)
-            if psnr > best_psnr:
-                model.save_model()
-                np.savetxt('PSNR_history.csv', PSNR_history)
+            # if psnr > best_psnr:
+            #     model.save_model()
+            #     np.savetxt('PSNR_history.csv', PSNR_history)
     

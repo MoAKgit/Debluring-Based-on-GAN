@@ -17,8 +17,8 @@ from torch.autograd import Variable
 import torchvision.transforms as transforms
 import torchvision
 import torch.nn.functional as F
-from torchvision.models import vgg16,vgg19
-import kornia
+from torchvision.models import vgg16,vgg19 
+# import kornia
 from piqa import SSIM
 from piqa import HaarPSI
 

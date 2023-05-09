@@ -33,7 +33,7 @@ class Gopro(Dataset):
         self.image_paths = glob.glob(os.path.join(self.path, "*.png"))
         
         if self.phase == 'test':
-            self.image_paths = self.image_paths[:1000]
+            self.image_paths = self.image_paths[:500]
         
         print('Number of imgs: %d'%(len(self.image_paths)))
         

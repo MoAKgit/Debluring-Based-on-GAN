@@ -16,7 +16,7 @@ import util
 import torchvision
 from torchvision.models._utils import IntermediateLayerGetter
 from losses import *
-
+from tqdm import tqdm
 
 class Model():
     def __init__(self, args, device):
@@ -25,7 +25,7 @@ class Model():
         self.args = args
         use_sigmoid = args.gan_type == 'gan'
         self.netG1 = networks.define_G(args, device )
-        self.netD1 = networks.define_D(args, device)
+        self.netD1 = networks.define_D(args, device, use_sigmoid)
         
             
         self.optimizer_G1 = torch.optim.Adam(self.netG1.parameters(), 
@@ -38,7 +38,7 @@ class Model():
         self.fake_label = 0.0
         self.device = device
         self.Tensor = tensor=torch.FloatTensor
-        
+        self.loss_L1 = nn.L1Loss()
         self.loss_mse = nn.MSELoss()
         self.loss_perceptual = PerceptualLoss().cuda()
         self.Laplacian_edge_loss = Laplacian_edge_loss(3)
@@ -57,7 +57,7 @@ class Model():
         pred_real_B1 = self.netD1(real_B)
         
         ####  updating D1
-        for i in range(1):
+        for i in range(2):
             
             b_size = real_A.shape[0]
             real_img_label = self.Tensor(
@@ -82,21 +82,26 @@ class Model():
         
         errG_fake = self.loss_mse(pred_fake_A1, fake_img_label)
         perceptual_loss = self.loss_perceptual(fake_A1, real_B)
-        lossContent = self.loss_mse(fake_A1, real_B) 
+        # lossContent = self.loss_mse(fake_A1, real_B) 
+        lossContent = self.loss_L1(fake_A1, real_B) 
         Laplacian_edge_loss = self.Laplacian_edge_loss(fake_A1, real_B)
         sobel_edge_loss = self.sobel_edge_loss(fake_A1, real_B)
+        ##############################################
         SSIM_loss0 = self.SSIM_loss0(fake_A1, real_B)
         SSIM_loss1 = self.SSIM_loss1(fake_A1, real_B)
         SSIM_loss2 = self.SSIM_loss2(fake_A1, real_B)
         SSIM_loss3 = self.SSIM_loss3(fake_A1, real_B)
         SSIM_loss4 = self.SSIM_loss4(fake_A1, real_B)
-        
+        #############################################
         HaarpsiLoss = self.HaarPSILoss(fake_A1, real_B)
-        
+        #############################################
         SSIM_loss = SSIM_loss0 + SSIM_loss1 +SSIM_loss2 + SSIM_loss3+ SSIM_loss4
         
-        loss = errG_fake + lossContent+ perceptual_loss + Laplacian_edge_loss +\
-            sobel_edge_loss  +  SSIM_loss + HaarpsiLoss       
+        loss = lossContent + errG_fake + perceptual_loss + sobel_edge_loss  +  SSIM_loss   
+        
+        # loss = lossContent + errG_fake + perceptual_loss + Laplacian_edge_loss +\
+        #     sobel_edge_loss  +  SSIM_loss + HaarpsiLoss   
+            
         self.optimizer_G1.zero_grad()
         loss.backward()
         self.optimizer_G1.step()
@@ -107,7 +112,7 @@ class Model():
         
         psnrMetric = []
         nun_samples = 0
-        for i, (real_A, real_B) in enumerate(test_dataloader,0):
+        for i, (real_A, real_B) in enumerate(tqdm(test_dataloader),0):
             real_A, real_B= map(lambda x: x.to(device), [real_A, real_B])
             b,_,_,_ = real_B.shape
             fake_A1 = model(real_A)
